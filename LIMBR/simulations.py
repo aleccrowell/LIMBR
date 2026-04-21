@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import pickle
 import string
 from sklearn.preprocessing import scale
 from sklearn.metrics import roc_curve, auc
@@ -71,9 +70,7 @@ class simulate:
 
     def __init__(self,tpoints=24,nrows=1000, nreps=3, tpoint_space=2, pcirc=.5, phase_prop=.5, phase_noise=.25, amp_noise=.75, n_batch_effects=3, pbatch=.5, effect_size=2, p_miss=.2,lam_miss=5,rseed=4574):
         """
-        Simulates circadian data and saves as a properly formatted example .csv file.
-
-        Takes a file from one of two data types protein ('p') which has two index columns or rna ('r') which has only one.  Opens a pickled file matching pooled controls to corresponding samples if data_type = 'p' and opens a picked file matching samples to blocks if designtype = 'b'.
+        Simulates circadian data with optional batch effects and missing values.
 
         """
 
@@ -145,17 +142,18 @@ class simulate:
 
     def generate_pool_map(self, out_name='pool_map'):
         """
+        Writes a pool map parquet file mapping each sample column to pool 1.
 
+        Parameters
+        ----------
         out_name : str
-
-        output file stem
+            Output file stem.  The file is written as ``<out_name>.parquet``
+            with a ``pool_number`` column indexed by sample column name.
 
         """
         self.out_name = str(out_name)
-        pool_map = {}
-        for i in self.cols:
-            pool_map[i] = 1
-        pickle.dump(pool_map, open(out_name+'.p', "wb") )
+        pool_map = {col: 1 for col in self.cols}
+        pd.DataFrame({'pool_number': pool_map}).to_parquet(out_name + '.parquet')
 
 
     def write_output(self, out_name='simulated_data'):
@@ -182,7 +180,6 @@ class simulate:
         self.simdf.insert(0, 'Protein', prots)
         self.simdf.insert(0, 'Peptide', peps)
         self.simdf.set_index('Protein',inplace=True)
-        self.simdf.groupby(level='Protein').mean()
         self.simdf.index.names = ['#']
         self.simdf.to_csv(out_name+'_baseline.txt',sep='\t')
 

@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import os
-import time
 import scipy.stats as stats
 from numpy.linalg import svd, lstsq
 from sklearn.decomposition import PCA
@@ -15,8 +14,7 @@ from sklearn.neighbors import NearestNeighbors
 import math
 import json
 from ctypes import c_int
-import pickle
-from multiprocess import Pool, current_process, Manager
+from multiprocess import Pool
 from functools import partial
 from sklearn import preprocessing
 
@@ -37,9 +35,9 @@ class sva:
     data_type : str
         Type of dataset, one of 'p' or 'r'.  'p' indicates proteomic with two index columns specifying peptide and protein.  'r' indicates RNAseq with one index column indicating gene.
     blocks : str
-        Path to file containing block design in the case of design = 'b'.  This should be a pickled list of which block each sample corresponds with.
+        Path to parquet file containing block design in the case of design = 'b'.  Must have a 'block' column whose values (integers) indicate the block assignment for each sample column, in order.
     pool : str
-        Path to file containing pooled control design for experiment in the case of data_type = 'p'.  This should be a pickled dictionary with the keys being column headers corresponding to each sample and the values being the corresponding pooled control number.
+        Path to parquet file containing pooled control design for experiment in the case of data_type = 'p'.  Must have a 'pool_number' column indexed by sample column headers.
 
 
     Attributes
@@ -62,7 +60,7 @@ class sva:
         Imports data and initializes an sva object.
 
 
-        Takes a file from one of two data types protein ('p') which has two index columns or rna ('r') which has only one.  Opens a pickled file matching pooled controls to corresponding samples if data_type = 'p' and opens a picked file matching samples to blocks if designtype = 'b'.
+        Takes a file from one of two data types protein ('p') which has two index columns or rna ('r') which has only one.  Reads a parquet file matching pooled controls to corresponding samples if data_type = 'p' and a parquet file matching samples to blocks if designtype = 'b'.
 
         """
 
@@ -74,9 +72,9 @@ class sva:
             self.raw_data = pd.read_csv(filename,sep='\t').set_index('#')
         self.designtype = str(design)
         if self.designtype == 'b':
-            self.block_design = pickle.load( open( blocks, "rb" ) )
+            self.block_design = pd.read_parquet(blocks)['block'].tolist()
         if pool != None:
-            self.norm_map = pickle.load( open( pool, "rb" ) )
+            self.norm_map = pd.read_parquet(pool)['pool_number'].to_dict()
         elif pool == None:
             self.norm_map = None
         self.notdone = True
@@ -396,7 +394,7 @@ class sva:
         """
         Performs permutation testing on residual matrix SVD.
 
-        The rows of the residual matrix are first permuted.  Then  get_tks is called to calculate explained variance ratios and these tks are compared to the values from the actual residual matrix.  A running total is kept for the number of times the explained variance from the permuted matrix exceeds that from the original matrix. And significance is estimated by dividing these totals by the number of permutations.  This permutation testing is multiprocessed to decrease calculation times.
+        The rows of the residual matrix are first permuted.  Then get_tks is called to calculate explained variance ratios and these tks are compared to the values from the actual residual matrix.  A running total is kept for the number of times the explained variance from the permuted matrix exceeds that from the original matrix. Significance is estimated by dividing these totals by the number of permutations.  When npr > 1 a multiprocess Pool is used to parallelise the permutations.
         
         Parameters
         ----------
@@ -437,29 +435,14 @@ class sva:
                     out[m] += 1
             return out
 
+        seeds = range(int(nperm))
         if int(npr) > 1:
-            mgr = Manager()
-            output = mgr.list()
-            l = mgr.Lock()
             with Pool(int(npr)) as pool:
-                pbar = tqdm(total=int(nperm), desc='permuting', position=0, smoothing=0)
-                imap_it = pool.imap_unordered(single_it, range(int(nperm)))
-                for x in imap_it:
-                    pbar.update(1)
-                    with l:
-                        output.append(x)
-            pbar.close()
-            pool.close()
-            pool.join()
-            self.sigs = np.sum(np.asarray(output), axis=0)/float(nperm)
-            time.sleep(40)
+                output = list(tqdm(pool.imap_unordered(single_it, seeds),
+                                   total=int(nperm), desc='permuting', smoothing=0))
         else:
-            output = []
-            with tqdm(total=int(nperm), desc='permuting', position=0, smoothing=0) as pbar:
-                for x in range(int(nperm)):
-                    output.append(single_it(x))
-                    pbar.update(1)
-            self.sigs = np.sum(np.asarray(output), axis=0)/float(nperm)
+            output = [single_it(s) for s in tqdm(seeds, desc='permuting', smoothing=0)]
+        self.sigs = np.sum(np.asarray(output), axis=0) / float(nperm)
 
     def eig_reg(self,alpha=0.05):
         """
