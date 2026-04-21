@@ -23,7 +23,7 @@ matplotlib = "^3.10"
 pyarrow = "^23.0.1"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.0"
+pytest = "^9.0.3"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
