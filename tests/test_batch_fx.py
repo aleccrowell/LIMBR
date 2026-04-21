@@ -146,3 +146,11 @@ def test_preprocess_default_sets_expected_attrs(rnaseq_file):
     assert hasattr(obj, "data_reduced")
     assert hasattr(obj, "res")
     assert hasattr(obj, "tks")
+
+
+def test_perm_test_parallel(rnaseq_file):
+    obj = sva(rnaseq_file, design="c", data_type="r")
+    obj.preprocess_default()
+    obj.perm_test(nperm=10, npr=2)
+    assert len(obj.sigs) == len(obj.tks)
+    assert all(0.0 <= s <= 1.0 for s in obj.sigs)
