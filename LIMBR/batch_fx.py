@@ -1,22 +1,57 @@
+import itertools
+
 import numpy as np
 import pandas as pd
-import os
-import scipy.stats as stats
-from numpy.linalg import svd, lstsq
+from multiprocess import Pool
+from sklearn import preprocessing
 from sklearn.decomposition import PCA
 from scipy.stats import linregress, f_oneway
-import itertools
-import sys
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from tqdm import tqdm
-from sklearn.preprocessing import scale
-from sklearn.neighbors import NearestNeighbors
-import math
-import json
-from ctypes import c_int
-from multiprocess import Pool
-from functools import partial
-from sklearn import preprocessing
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for parallel permutation testing
+# ---------------------------------------------------------------------------
+
+# Per-worker globals populated once by _init_perm_worker (Pool initializer).
+# This avoids re-serialising the large residual matrix for every task.
+_perm_res = _perm_tks = _perm_designtype = _perm_tpoints = _perm_block_design = None
+
+
+def _init_perm_worker(res, tks, designtype, tpoints, block_design):
+    """Pool initializer: stores shared read-only data in each worker once."""
+    global _perm_res, _perm_tks, _perm_designtype, _perm_tpoints, _perm_block_design
+    _perm_res = res
+    _perm_tks = tks
+    _perm_designtype = designtype
+    _perm_tpoints = tpoints
+    _perm_block_design = block_design
+
+
+def _perm_worker(rseed):
+    """Single permutation iteration executed inside a pool worker."""
+    rng = np.random.default_rng(rseed * 100)
+    rstar = rng.permuted(_perm_res.copy(), axis=1)
+
+    if _perm_designtype in ('c', 't'):
+        resstar = np.array([row - lowess(row, _perm_tpoints, it=1)[:, 1] for row in rstar])
+    else:
+        blocks = np.asarray(_perm_block_design)
+        ma = np.empty_like(rstar)
+        for v in np.unique(blocks):
+            idx = blocks == v
+            ma[:, idx] = rstar[:, idx].mean(axis=1, keepdims=True)
+        resstar = rstar - ma
+
+    pca = PCA(svd_solver='randomized', random_state=rseed * 100)
+    pca.fit(resstar)
+    tkstar = pca.explained_variance_ratio_
+
+    n = min(len(tkstar), len(_perm_tks))
+    out = np.zeros(len(_perm_tks))
+    out[:n] = tkstar[:n] > _perm_tks[:n]
+    return out
 
 class sva:
     """
@@ -212,37 +247,20 @@ class sva:
             Given a period (fixed here at 12 samples) the autocorrelation is calculated at 12 and 6 samples shift and the difference indicates the degree of circadian signal.
 
             """
-            def autocorr(l,shift):
-                """
-                calculates autocorrelation of a series at a given shift
-
-
-                Parameters
-                ----------
-                l : list
-                    Averaged abundance values for the given row.
-                shift : int
-                    the shift at which to calculate the autocorrelation.
-
-
-                Returns
-                -------
-                acor : float
-                    calculated autocorrelation
-
-                """
-                acor = np.dot(l, np.roll(l, shift)) / np.dot(l, l)
-                return acor
+            def autocorr_vec(m, shift):
+                """Row-wise autocorrelation of a 2-D array at a given shift."""
+                shifted = np.roll(m, shift, axis=1)
+                return np.einsum('ij,ij->i', m, shifted) / np.einsum('ij,ij->i', m, m)
 
             per = 12
-            cors = []
-            for row in tqdm(self.data.values):
-                ave = []
-                #might eventually need to account for case where all replicates of a timepoint are missing (in this case the experiment is probably irreparably broken anyway though)
-                for k in set(self.tpoints):
-                    ave.append((np.mean([row[i] for i, j in enumerate(self.tpoints) if j == k])*1000000))
-                cors.append((autocorr(ave,per) - autocorr(ave,(per//2))))
-            self.cors = np.asarray(cors)
+            tps = np.asarray(self.tpoints)
+            data = self.data.values
+            # Build (nrows, n_unique_tpoints) matrix of per-timepoint means
+            ave = np.column_stack([
+                data[:, tps == tp].mean(axis=1) * 1e6
+                for tp in np.unique(tps)
+            ])
+            self.cors = autocorr_vec(ave, per) - autocorr_vec(ave, per // 2)
 
         def l_cor():
             """
@@ -252,10 +270,8 @@ class sva:
             In a timecourse, rows least affected by batch effects should be those with the best fit from a lowess model.  Goodness of fit in this case is defined as the sum of squared errors for the lowess fit.
 
             """
-            cors = []
-            for row in tqdm(self.data.values):
-                ys = lowess(row, self.tpoints, it=1)[:,1]
-                cors.append(-sum((row - ys)**2))
+            cors = [-np.sum((row - lowess(row, self.tpoints, it=1)[:, 1]) ** 2)
+                    for row in tqdm(self.data.values)]
             self.cors = np.asarray(cors)
 
         def block_cor():
@@ -266,12 +282,11 @@ class sva:
             In a blocked study, rows least affected by batch effects should be those for which within group variation is much smaller than between group variation.  In this case the ANOVA f statistic is used as a relative measure of within and between group variability.
 
             """
-            cors = []
-            for row in tqdm(self.data.values):
-                blist = []
-                for k in set(self.block_design):
-                    blist.append(([row[i] for i, j in enumerate(self.block_design) if j == k]))
-                cors.append(f_oneway(*blist)[0])
+            blocks = np.asarray(self.block_design)
+            # Pre-compute block indices once rather than rebuilding per row
+            block_indices = [np.where(blocks == b)[0] for b in np.unique(blocks)]
+            cors = [f_oneway(*[row[idx] for idx in block_indices])[0]
+                    for row in tqdm(self.data.values)]
             self.cors = np.asarray(cors)
 
         if self.designtype == 'c':
@@ -302,9 +317,7 @@ class sva:
             Reduced dataset.
 
         """
-        perc_red = float(perc_red)
-        uncor = [(i<(np.percentile(self.cors,perc_red))) for i in self.cors]
-        self.data_reduced = self.data[uncor]
+        self.data_reduced = self.data[self.cors < np.percentile(self.cors, float(perc_red))]
 
 
     def get_res(self,in_arr):
@@ -329,22 +342,16 @@ class sva:
         """
         def get_l_res(arr):
             """calculates residuals from a lowess model for timecourse designs"""
-            res = []
-            for row in arr:
-                ys = lowess(row, self.tpoints, it=1)[:,1]
-                res.append(row - ys)
-            return np.array(res)
+            return np.array([row - lowess(row, self.tpoints, it=1)[:, 1] for row in arr])
 
         def get_b_res(arr):
             """calculates residuals from the block mean for block based designs"""
-            m = {}
-            for v in set(self.block_design):
-                indices = [i for i, x in enumerate(self.block_design) if x == v]
-                m[v] = np.mean(arr[:,indices],axis=1)
-            ma = np.zeros(np.shape(arr))
-            for i in tqdm(range(len(self.block_design)), desc='get block residuals 2', leave=False):
-                ma[:,i]=m[self.block_design[i]]
-            return np.subtract(arr,ma)
+            blocks = np.asarray(self.block_design)
+            ma = np.empty_like(arr)
+            for v in np.unique(blocks):
+                idx = blocks == v
+                ma[:, idx] = arr[:, idx].mean(axis=1, keepdims=True)
+            return arr - ma
 
         if self.designtype == 'c':
             res_mat = get_l_res(in_arr)
@@ -410,36 +417,26 @@ class sva:
 
         """
         def single_it(rseed):
-            """
-            Single iteration of permutation testing.
-            Permutes residual matrix, calculates new tks for permuted matrix and compares to original tks.
-            Parameters
-            ----------
-            rseed : int
-                Random seed.
-            Returns
-            -------
-            out : arr
-                Counts of number of times permuted explained variance ratio exceeded explained variance ratio from actual residual matrix.
-            """
-
-            rstate = np.random.RandomState(rseed*100)
-            rstar = np.copy(self.res)
-            out = np.zeros(len(self.tks))
-            for i in range(rstar.shape[0]):
-                rstate.shuffle(rstar[i,:])
+            rng = np.random.default_rng(rseed * 100)
+            rstar = rng.permuted(self.res.copy(), axis=1)
             resstar = self.get_res(rstar)
             tkstar = self.get_tks(resstar)
-            for m in range(len(self.tks)):
-                if tkstar[m] > self.tks[m]:
-                    out[m] += 1
+            n = min(len(tkstar), len(self.tks))
+            out = np.zeros(len(self.tks))
+            out[:n] = tkstar[:n] > self.tks[:n]
             return out
 
         seeds = range(int(nperm))
         if int(npr) > 1:
-            with Pool(int(npr)) as pool:
-                output = list(tqdm(pool.imap_unordered(single_it, seeds),
-                                   total=int(nperm), desc='permuting', smoothing=0))
+            tpoints = getattr(self, 'tpoints', None)
+            block_design = getattr(self, 'block_design', None)
+            chunksize = max(1, int(nperm) // (int(npr) * 4))
+            init_args = (self.res, self.tks, self.designtype, tpoints, block_design)
+            with Pool(int(npr), initializer=_init_perm_worker, initargs=init_args) as pool:
+                output = list(tqdm(
+                    pool.imap_unordered(_perm_worker, seeds, chunksize=chunksize),
+                    total=int(nperm), desc='permuting', smoothing=0,
+                ))
         else:
             output = [single_it(s) for s in tqdm(seeds, desc='permuting', smoothing=0)]
         self.sigs = np.sum(np.asarray(output), axis=0) / float(nperm)

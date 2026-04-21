@@ -1,22 +1,5 @@
 import numpy as np
 import pandas as pd
-import os
-import time
-import scipy.stats as stats
-from numpy.linalg import svd, lstsq
-from sklearn.decomposition import PCA
-from scipy.stats import linregress, f_oneway
-import itertools
-import sys
-from statsmodels.nonparametric.smoothers_lowess import lowess
-from tqdm import tqdm
-from sklearn.preprocessing import scale
-from sklearn.neighbors import NearestNeighbors
-import math
-import json
-from ctypes import c_int
-from multiprocess import Pool, current_process, Manager
-from functools import partial
 from sklearn import preprocessing
 
 class old_fashioned:
