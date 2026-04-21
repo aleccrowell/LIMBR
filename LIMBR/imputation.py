@@ -15,7 +15,6 @@ from sklearn.neighbors import NearestNeighbors
 import math
 import json
 from ctypes import c_int
-import pickle
 from multiprocess import Pool, current_process, Manager
 from functools import partial
 from sklearn import preprocessing
@@ -154,7 +153,7 @@ missing values with corresponding averages.
             """
 
             #drop missing columns given missingness pattern
-            newarr = comparr[:,~np.array(list(pattern)).astype(bool)]
+            newarr = comparr[:,~np.array(list(pattern)).astype(int).astype(bool)]
             #fit nearest neighbors
             nbrs = NearestNeighbors(n_neighbors=self.NN).fit(newarr)
             outa = []
@@ -162,7 +161,7 @@ missing values with corresponding averages.
             for rowind, row in enumerate(origarr[inds]):
                 outl = []
                 #get indexes of given rows nearest neighbors
-                indexes = nbrs.kneighbors([origarr[inds[rowind],~np.array(list(pattern)).astype(bool)]],return_distance=False)
+                indexes = nbrs.kneighbors([origarr[inds[rowind],~np.array(list(pattern)).astype(int).astype(bool)]],return_distance=False)
                 #get array of nearest neighbors
                 means = np.mean(comparr[indexes[0][1:]], axis=0)
                 #iterate over entries in each row

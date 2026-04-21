@@ -15,7 +15,6 @@ from sklearn.neighbors import NearestNeighbors
 import math
 import json
 from ctypes import c_int
-import pickle
 from multiprocess import Pool, current_process, Manager
 from functools import partial
 from sklearn import preprocessing
@@ -35,7 +34,7 @@ class old_fashioned:
     data_type : str
         Type of dataset, one of 'p' or 'r'.  'p' indicates proteomic with two index columns specifying peptide and protein.  'r' indicates RNAseq with one index column indicating gene.
     pool : str
-        Path to file containing pooled control design for experiment in the case of data_type = 'p'.  This should be a pickled dictionary with the keys being column headers corresponding to each sample and the values being the corresponding pooled control number.
+        Path to parquet file containing pooled control design for experiment in the case of data_type = 'p'.  Must have a 'pool_number' column indexed by sample column headers.
 
 
     Attributes
@@ -54,7 +53,7 @@ class old_fashioned:
         Imports data and initializes an old_fashioned object.
 
 
-        Takes a file from one of two data types protein ('p') which has two index columns or rna ('r') which has only one.  Opens a pickled file matching pooled controls to corresponding samples if data_type = 'p'.
+        Takes a file from one of two data types protein ('p') which has two index columns or rna ('r') which has only one.  Reads a parquet file matching pooled controls to corresponding samples if data_type = 'p'.
 
         """
 
@@ -65,7 +64,7 @@ class old_fashioned:
         if self.data_type == 'r':
             self.raw_data = pd.read_csv(filename,sep='\t').set_index('#')
         if pool != None:
-            self.norm_map = pickle.load( open( pool, "rb" ) )
+            self.norm_map = pd.read_parquet(pool)['pool_number'].to_dict()
         self.notdone = True
 
     def pool_normalize(self):
