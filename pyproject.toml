@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "LIMBR"
-version = "0.2.9.5"
+version = "0.3.0"
 description = "Learning and Imputation for Mass-spec Bias Reduction"
 authors = ["Alec Crowell <alexander.m.crowell@gmail.com>"]
 license = "BSD-3-Clause"
