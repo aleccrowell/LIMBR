@@ -1,3 +1,9 @@
+import argparse
+import os
+import re
+import tempfile
+from collections import Counter
+
 import numpy as np
 import pandas as pd
 import string
@@ -92,7 +98,7 @@ class simulate:
         self.cols = []
         for i in range(self.tpoints):
             for j in range(self.nreps):
-                self.cols.append(("{0:0=2d}".format(self.tpoint_space*i+self.tpoint_space))+'_'+str(j+1))
+                self.cols.append("ZT"+("{0:0=2d}".format(self.tpoint_space*i+self.tpoint_space))+'_'+str(j+1))
 
         #randomly determine which rows are circadian
         self.circ = np.random.binomial(1, self.pcirc, self.nrows)
@@ -193,6 +199,82 @@ class analyze:
         self.tags = {}
         self.merged = []
         self.i = 0
+
+    def run_bootjtk(self, filename, tag, size=50, workers=1):
+        """
+        Run bootjtk significance testing on a LIMBR-processed (or baseline) file.
+
+        Replaces the external eJTK workflow from the README. Reads the tab-delimited
+        output, converts headers to the bootjtk format, runs BooteJTK and CalcP, then
+        calls add_data with the results.
+
+        Parameters
+        ----------
+        filename : str
+            Path to a LIMBR-processed, old_fashioned, or baseline output file.
+        tag : str
+            Label used to identify this dataset in ROC curves.
+        size : int
+            Number of bootstrap resamples per gene (default 50).
+        workers : int
+            Parallel worker processes for BooteJTK (default 1).
+        """
+        from bootjtk import BooteJTK, CalcP
+        import bootjtk as _bootjtk_pkg
+
+        ref_dir = os.path.join(os.path.dirname(_bootjtk_pkg.__file__), 'ref_files')
+
+        df = pd.read_csv(filename, sep='\t', index_col=0)
+
+        # Drop non-data columns (e.g. 'Peptide' present in baseline files)
+        data_cols = [c for c in df.columns if re.match(r'^(ZT|CT)?\d', str(c))]
+        df = df[data_cols]
+
+        # Strip replicate suffixes: 'ZT02_1' -> 'ZT02', '02_1' -> '02'
+        df.columns = [re.sub(r'_\d+$', '', str(c)) for c in df.columns]
+        df.index.name = 'ID'
+        df = df.replace('NULL', 'NA')
+
+        reps = int(np.median(list(Counter(df.columns).values())))
+
+        def _make_args(fn):
+            return argparse.Namespace(
+                filename=fn,
+                means='DEFAULT', sds='DEFAULT', ns='DEFAULT',
+                output='DEFAULT', pickle='DEFAULT',
+                id_list='DEFAULT', null_list='DEFAULT',
+                write=False, prefix='', reps=reps, size=size,
+                workers=workers, waveform='cosine',
+                width=os.path.join(ref_dir, 'asymmetries_02-22_by2.txt'),
+                phase=os.path.join(ref_dir, 'phases_00-22_by2.txt'),
+                period=os.path.join(ref_dir, 'period24.txt'),
+                harding=False, normal=False,
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = os.path.join(tmpdir, 'data.txt')
+            df.to_csv(data_path, sep='\t')
+
+            null_df = pd.DataFrame(
+                np.random.normal(0, 1, df.shape),
+                index=df.index,
+                columns=df.columns,
+            )
+            null_df.index.name = 'ID'
+            null_path = os.path.join(tmpdir, 'null.txt')
+            null_df.to_csv(null_path, sep='\t')
+
+            data_out, _, _ = BooteJTK.main(_make_args(data_path))
+            null_out, _, _ = BooteJTK.main(_make_args(null_path))
+
+            CalcP.main(argparse.Namespace(
+                filename=data_out,
+                null=null_out,
+                fit=False,
+            ))
+            calcp_out = data_out.replace('.txt', '_GammaP.txt')
+
+            self.add_data(calcp_out, tag)
 
     def add_data(self,filename_ejtk,tag,include_missing=True):
         self.tags[tag] = self.i
