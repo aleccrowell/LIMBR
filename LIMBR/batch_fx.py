@@ -219,7 +219,7 @@ class sva:
 
         """
 
-        tpoints = [i.replace('CT','') for i in self.data.columns.values]
+        tpoints = [i.replace('ZT', '').replace('CT','') for i in self.data.columns.values]
         tpoints = [int(i.split('_')[0]) for i in tpoints]
         #deprecated splitting for alternative header syntax
         #tpoints = [int(i.split('.')[0]) for i in tpoints]
