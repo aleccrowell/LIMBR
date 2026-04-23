@@ -94,7 +94,7 @@ class simulate:
         self.cols = []
         for i in range(self.tpoints):
             for j in range(self.nreps):
-                self.cols.append(("{0:0=2d}".format(self.tpoint_space*i+self.tpoint_space))+'_'+str(j+1))
+                self.cols.append("ZT"+("{0:0=2d}".format(self.tpoint_space*i+self.tpoint_space))+'_'+str(j+1))
 
         #randomly determine which rows are circadian
         self.circ = np.random.binomial(1, self.pcirc, self.nrows)

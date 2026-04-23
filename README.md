@@ -66,13 +66,15 @@ poetry run pytest
 ## How to Use?
 
 ### A Note on Data Formatting
-LIMBR expects input files to be formatted as tab separated.  For Proteomics data, The first column should contain the Peptide and the second column the protein to which that peptide corresponds.  In the case of RNAseq data, the first column should indicate the gene or transcript identifier.  The header should start with 'Peptide' and 'Protein' for proteomics data or '#' for rnaseq data.  For time series datasets, the rest of the header should be either of the form 02_1 for data with the first number indicating the timepoint and the second the replicate or of the form pool_01 for pooled controls.  It is important that single digit timepoints include the leading zero for formatting. Missing values should be indicated by the string 'NULL'.  Example data file:
+LIMBR expects input files to be formatted as tab separated.  For Proteomics data, The first column should contain the Peptide and the second column the protein to which that peptide corresponds.  In the case of RNAseq data, the first column should indicate the gene or transcript identifier.  The header should start with 'Peptide' and 'Protein' for proteomics data or '#' for rnaseq data.
 
-| Peptide | Protein | 00_1 | 00_2 | 00_3 | 02_1 | 02_2 | 02_3 |
+For time series datasets, the rest of the header should use the format `ZT{HH}_{rep}`, where `HH` is the zero-padded hour and `rep` is the replicate number (e.g. `ZT00_1`, `ZT02_1`).  This format is shared with [BooteJTK](https://github.com/aleccrowell/BooteJTK-c) and [PIRS](https://github.com/aleccrowell/PIRS), so files can be passed between tools without reformatting.  The legacy bare-numeric format (e.g. `02_1`) and the `CT`-prefixed variant (e.g. `CT02_1`) are also accepted for backwards compatibility.  Pooled control columns should use the form `pool_01`.  It is important that single digit timepoints include the leading zero for formatting. Missing values should be indicated by the string 'NULL'.  Example data file:
+
+| Peptide | Protein | ZT00_1 | ZT00_2 | ZT00_3 | ZT02_1 | ZT02_2 | ZT02_3 |
 |---|---|---|---|---|---|---|---|
 | Peptide_ID | Protein_ID | data | data | data | data | data | data |
 
-Before using LIMBR you need to specify a few key features of your experiment.  If you are analyzing proteomics data with pooled controls, you need to let LIMBR know which pools correspond to which samples.  This is done by generating a pool map file.  The pool map is a parquet file with a `pool_number` column whose index contains your sample column headers and whose values are the corresponding pool numbers.  It can be generated with pandas: `pd.DataFrame({'pool_number': {'02_1': 1, '02_2': 1, ...}}).to_parquet('pool_map.parquet')`.  The simulation module can also generate one automatically via `simulation.generate_pool_map()`.  Similarly, if you are analyzing your data in blocked mode (i.e. a non-time course experiment) you will need to create a block file — a parquet file with a single `block` column listing the block assignment (as an integer) for each sample column in order: `pd.DataFrame({'block': [0, 0, ..., 1, 1, ...]}).to_parquet('blocks.parquet')`.
+Before using LIMBR you need to specify a few key features of your experiment.  If you are analyzing proteomics data with pooled controls, you need to let LIMBR know which pools correspond to which samples.  This is done by generating a pool map file.  The pool map is a parquet file with a `pool_number` column whose index contains your sample column headers and whose values are the corresponding pool numbers.  It can be generated with pandas: `pd.DataFrame({'pool_number': {'ZT02_1': 1, 'ZT02_2': 1, ...}}).to_parquet('pool_map.parquet')`.  The simulation module can also generate one automatically via `simulation.generate_pool_map()`.  Similarly, if you are analyzing your data in blocked mode (i.e. a non-time course experiment) you will need to create a block file — a parquet file with a single `block` column listing the block assignment (as an integer) for each sample column in order: `pd.DataFrame({'block': [0, 0, ..., 1, 1, ...]}).to_parquet('blocks.parquet')`.
 
 Once your data is properly formatted and you've generated the experimental design files you need, things get much easier.
 
@@ -164,7 +166,7 @@ to_sva.normalize(output)
 
 ### Performance
 
-So how does LIMBR do on that simulated data from the first usage example?  One simple way to test would be to run LIMBRs output through eJTK along with the output of a simpler normalization procedure and compare the ROC curves.  eJTK is an algorithm for classification of circadian expression by Alan Hutchison which can be found [here](https://github.com/alanlhutchison/empirical-JTK_CYCLE-with-asymmetry). To get the output of a basic normalization protocol we can do:
+So how does LIMBR do on that simulated data from the first usage example?  One simple way to test would be to run LIMBR's output through [bootjtk](https://github.com/alanlhutchison/BooteJTK) (a Python 3 implementation of the bootstrapped empirical JTK_CYCLE algorithm for circadian rhythm detection) along with the output of a simpler normalization procedure and compare the ROC curves.  To get the output of a basic normalization protocol we can do:
 
 ```python
 from LIMBR import old_fashioned
@@ -176,35 +178,19 @@ to_old.normalize('old_processed.txt')
 
 When you generated your simulated data, the simulation module should also have output a 'baseline' data file.  This file contains the simulated data before the addition of any bias trends, which we can use to set a performance baseline (we would never expect an algorithm to perform better than the results we get from analyzing the baseline data).
 
-If you have eJTK installed in a ./src directory relative to the location of the files generated by LIMBR, from bash, you can then run (note: eJTK requires Python 2):
-
-```bash
-sed -e 's/_[[:digit:]]//g' LIMBR_processed.txt > temp.txt
-cut -f 1,3- temp.txt > LIMBR_processed.txt
-sed -e 's/_[[:digit:]]//g' old_processed.txt > temp.txt
-cut -f 1,3- temp.txt > old_processed.txt
-sed -e 's/_[[:digit:]]//g' simulated_data_baseline.txt > temp.txt
-cut -f 1,3- temp.txt > simulated_data_baseline.txt
-rm temp.txt
-
-python2 src/eJTK-CalcP.py -f LIMBR_processed.txt -w src/ref_files/waveform_cosine.txt -a src/ref_files/asymmetries_02-22_by2.txt -s src/ref_files/phases_00-22_by2.txt -p src/ref_files/period24.txt
-
-python2 src/eJTK-CalcP.py -f old_processed.txt -w src/ref_files/waveform_cosine.txt -a src/ref_files/asymmetries_02-22_by2.txt -s src/ref_files/phases_00-22_by2.txt -p src/ref_files/period24.txt
-
-python2 src/eJTK-CalcP.py -f simulated_data_baseline.txt -w src/ref_files/waveform_cosine.txt -a src/ref_files/asymmetries_02-22_by2.txt -s src/ref_files/phases_00-22_by2.txt -p src/ref_files/period24.txt
-```
-
-The first part simply removes the unique replicate identifiers from the headers of our files to comply with eJTKs formatting conventions and the second part runs eJTK.  This should result in several output files including `LIMBR_processed__jtkout_GammaP.txt` and `old_processed__jtkout_GammaP.txt`.  The 'true_classes' file used here should have been generated when you ran the simulation module.  Once this classification step is complete, LIMBR can help you analyze your results. Back in python you can run:
+Once you have the processed files, significance testing and ROC analysis can be done entirely in Python:
 
 ```python
 from LIMBR import simulations
 
 analysis = simulations.analyze('simulated_data_true_classes.txt')
-analysis.add_data('LIMBR_processed__jtkout_GammaP.txt', 'LIMBR')
-analysis.add_data('old_processed__jtkout_GammaP.txt', 'traditional')
-analysis.add_data('simulated_data_baseline__jtkout_GammaP.txt', 'baseline')
+analysis.run_bootjtk('LIMBR_processed.txt', 'LIMBR')
+analysis.run_bootjtk('old_processed.txt', 'traditional')
+analysis.run_bootjtk('simulated_data_baseline.txt', 'baseline')
 analysis.generate_roc_curve()
 ```
+
+`run_bootjtk` handles all file format conversion, runs bootstrapped JTK significance testing, and loads the results — no external tools or shell preprocessing required.  The 'true_classes' file used here should have been generated when you ran the simulation module.
 
 You should get a ROC curve that looks something like this:
 
@@ -245,8 +231,6 @@ simulation = simulations.simulate(tpoints, nrows, nreps, tpoint_space, pcirc, ph
 * Implement simulations for non-circadian time courses and block designs.
 
 * Review ensuring maximum vectorization/CUDA implementation.
-
-* Improve eJTK integration.
 
 ## Credits
 

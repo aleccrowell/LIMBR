@@ -9,7 +9,7 @@ NROWS = 60
 
 
 def _col_names():
-    return [f"{tp * 2:02d}_{r}" for tp in range(1, NTPOINTS + 1) for r in range(1, NREPS + 1)]
+    return [f"ZT{tp * 2:02d}_{r}" for tp in range(1, NTPOINTS + 1) for r in range(1, NREPS + 1)]
 
 
 @pytest.fixture
