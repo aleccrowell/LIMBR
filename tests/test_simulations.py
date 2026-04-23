@@ -14,9 +14,9 @@ def test_default_shapes():
 
 def test_cols_format():
     sim = simulate(tpoints=12, nrows=50, nreps=2, tpoint_space=2)
-    assert sim.cols[0] == "02_1"
-    assert sim.cols[1] == "02_2"
-    assert sim.cols[2] == "04_1"
+    assert sim.cols[0] == "ZT02_1"
+    assert sim.cols[1] == "ZT02_2"
+    assert sim.cols[2] == "ZT04_1"
     assert len(sim.cols) == 24
 
 
