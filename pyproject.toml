@@ -20,7 +20,7 @@ statsmodels = "^0.14"
 tqdm = "^4.67"
 multiprocess = "^0.70"
 matplotlib = "^3.10"
-pyarrow = "^23.0.1"
+pyarrow = ">=23.0.1,<25.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.3"
