@@ -248,9 +248,15 @@ simulation = simulations.simulate(tpoints, nrows, nreps, tpoint_space, pcirc, ph
 
 * Improve eJTK integration.
 
+## Citation
+
+If you use LIMBR, please cite:
+
+Crowell AM, Greene CS, Loros JJ, Dunlap JC. "Learning and Imputation for Mass-spec Bias Reduction (LIMBR)." _Bioinformatics_ 2019 35(9): 1518–1526. [doi:10.1093/bioinformatics/bty828](https://doi.org/10.1093/bioinformatics/bty828)
+
 ## Credits
 
-K nearest neighbors as an imputation method was originally proposed by Gustavo Batista in 2002 (http://conteudo.icmc.usp.br/pessoas/gbatista/files/his2002.pdf) and has seen a great deal of success since.
+K nearest neighbors as an imputation method was originally proposed by Gustavo Batista in 2002 (Batista GEAPA, Monard MC. "A Study of K-Nearest Neighbour as an Imputation Method." _Hybrid Intelligent Systems (HIS 2002)_, Frontiers in Artificial Intelligence and Applications vol. 87, IOS Press, pp. 251–260) and has seen a great deal of success since.
 
 The sva based methods build on work for micro-array datasets by Jeffrey Leek, with particular reliance on his PhD Thesis from the University of Washington (https://digital.lib.washington.edu/researchworks/bitstream/handle/1773/9586/3290558.pdf?sequence=1).
 
